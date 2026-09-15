@@ -1,0 +1,384 @@
+# title: Untitled_Knight_Game_Compacted (CHIP-8 Port)
+# author: Daniel Hanrahan Tools and Games
+# license: GNU GPL-3.0
+# version: 1
+# script: octo (CHIP-8 Assembly)
+
+# ======================
+# CONSTANTS
+# ======================
+# These mirror the exact constants from your Lua script.
+:const STEP_FRAMES 30
+:const TOTAL_STEPS 63
+
+:const STATE_NOTICE_TERMINAL 2
+:const STATE_TERMINAL        3
+:const STATE_GAME            4
+:const STATE_FAIL            5
+:const STATE_SUCCESS         6
+
+# ======================
+# VARIABLES (Register Map)
+# ======================
+# CHIP-8 has 16 8-bit registers (v0 to vF). We map your Lua variables directly to them.
+:alias temp_cmd       v0  # Used for reading/writing arrays without clobbering state
+:alias state          v1  # Current game state
+:alias frame          v2  # Frame counter (0 to 29)
+:alias step           v3  # Current step (1 to 63)
+:alias timer          v4  # Timer for terminal boot
+:alias awaiting_input v5  # Boolean (0=false, 1=true)
+:alias current_cmd    v6  # 0=None, 1=UP, 2=DOWN, 3=RIGHT, 4=ACTION
+:alias input_delay    v7  # Delay frames before input is accepted
+:alias show_title     v8  # Boolean for the title screen
+:alias title_timer    v9  # Timer for the title screen
+:alias draw_x         vA  # X coordinate for drawing sprites
+:alias draw_y         vB  # Y coordinate for drawing sprites
+:alias temp1          vC  # Temporary logic variable
+:alias temp2          vD  # Temporary logic variable
+
+# ======================
+# MAIN ENTRY POINT
+# ======================
+: main
+    # Initial Variable Setup (Mirrors Lua variables)
+    show_title := 1
+    title_timer := 255          # 255 is max for 8-bit register (~4.25 seconds)
+    state := STATE_NOTICE_TERMINAL
+    frame := 0
+    step := 1
+    timer := 0
+    awaiting_input := 0
+    current_cmd := 0
+    input_delay := 0
+    
+# ======================
+# TIC FUNCTION (Main Loop)
+# ======================
+: tic_loop
+    # CHIP-8 doesn't have a TIC() function, so we simulate 60 FPS
+    # by setting the delay timer to 1 and halting until it hits 0.
+    temp1 := 1
+    delay := temp1
+: wait_frame
+    temp1 := delay
+    if temp1 != 0 then jump wait_frame
+    
+    clear # cls(0) equivalent
+    
+    # ----------------------
+    # TITLE SCREEN (Copyright Notice)
+    # ----------------------
+    if show_title == 0 then jump run_state_machine
+    
+    # Draw Title Icon (Game Controller) since we can't draw the GPL text block
+    i := icon_title
+    draw_x := 28
+    draw_y := 12
+    sprite draw_x draw_y 8
+    
+    # title_timer = title_timer - 1
+    title_timer -= 1
+    if title_timer == 0 then jump skip_title
+    
+    # if btnp(4) ... (Using Key 5 as Action/Z button)
+    temp1 := 5
+    if temp1 key then jump skip_title
+    jump end_tic
+    
+: skip_title
+    show_title := 0
+    state := STATE_NOTICE_TERMINAL
+    timer := 0
+    jump end_tic
+
+    # ----------------------
+    # STATE MACHINE DISPATCH
+    # ----------------------
+: run_state_machine
+    if state != STATE_NOTICE_TERMINAL then jump check_terminal
+    jump do_notice_terminal
+
+: check_terminal
+    if state != STATE_TERMINAL then jump check_game
+    jump do_terminal
+
+: check_game
+    if state != STATE_GAME then jump check_fail
+    jump do_game
+
+: check_fail
+    if state != STATE_FAIL then jump check_success
+    jump do_fail
+
+: check_success
+    jump do_success
+
+
+# ======================
+# DEV TERMINAL NOTICE
+# ======================
+: do_notice_terminal
+    # Display Computer Terminal Icon
+    i := icon_term
+    draw_x := 28
+    draw_y := 12
+    sprite draw_x draw_y 8
+    
+    # if any_key() then state = STATE_TERMINAL timer = 0 end
+    # We loop through all 16 keys (0 to F) to check for a press
+    temp1 := 0
+: any_key_loop
+    if temp1 key then jump notice_key_pressed
+    temp1 += 1
+    temp2 := 16
+    if temp1 != temp2 then jump any_key_loop
+    jump end_tic
+
+: notice_key_pressed
+    state := STATE_TERMINAL
+    timer := 0
+    jump end_tic
+
+
+# ======================
+# TERMINAL BOOT
+# ======================
+: do_terminal
+    timer += 1
+    
+    # Display Stream Ready Icon (Play button)
+    i := icon_ready
+    draw_x := 28
+    draw_y := 12
+    sprite draw_x draw_y 8
+    
+    # if timer > 180 then reset_game() end
+    temp1 := 180
+    if timer != temp1 then jump end_tic
+    jump reset_game # Resets game and copies RAM arrays
+
+
+# ======================
+# TEXT-BASED QTE (STATE_GAME)
+# ======================
+: do_game
+    # frame = frame + 1
+    # step = math.floor(frame / STEP_FRAMES) + 1
+    frame += 1
+    temp1 := STEP_FRAMES
+    if frame != temp1 then jump skip_step_inc
+    frame := 0
+    step += 1
+: skip_step_inc
+
+    # if step > TOTAL_STEPS then state = STATE_SUCCESS return end
+    temp1 := 64 # TOTAL_STEPS + 1
+    if step != temp1 then jump process_input_logic
+    state := STATE_SUCCESS
+    jump end_tic
+
+: process_input_logic
+    # if not awaiting_input then ...
+    if awaiting_input == 1 then jump handle_awaiting
+    
+    # Fetch command from commands table: local cmd = commands[step]
+    i := commands_ram
+    i += step
+    load v0 # Loads memory into temp_cmd (v0)
+    
+    # if cmd then (if command isn't 0)
+    if temp_cmd == 0 then jump end_tic
+    
+    current_cmd := temp_cmd
+    awaiting_input := 1
+    input_delay := 1
+    jump draw_log
+    
+: handle_awaiting
+    # if input_delay > 0 then input_delay = input_delay - 1
+    if input_delay == 0 then jump check_input
+    input_delay -= 1
+    jump draw_log
+
+: check_input
+    # check_input(current_cmd)
+    if current_cmd != 1 then jump check_dn
+    temp1 := 2
+    if temp1 key then jump input_accepted
+    jump check_timeout
+    
+: check_dn
+    if current_cmd != 2 then jump check_rt
+    temp1 := 8
+    if temp1 key then jump input_accepted
+    jump check_timeout
+    
+: check_rt
+    if current_cmd != 3 then jump check_act
+    temp1 := 6
+    if temp1 key then jump input_accepted
+    jump check_timeout
+    
+: check_act
+    if current_cmd != 4 then jump check_timeout
+    temp1 := 5
+    if temp1 key then jump input_accepted
+    jump check_timeout
+
+: check_timeout
+    # elseif frame % STEP_FRAMES == STEP_FRAMES-1 then state = STATE_FAIL
+    # Since our frame resets at 30, frame 29 is the timeout frame.
+    temp1 := 29
+    if frame != temp1 then jump draw_log
+    state := STATE_FAIL
+    temp1 := 30
+    buzzer := temp1 # Long buzz for DESYNC / STREAM FAILED
+    jump draw_log
+
+: input_accepted
+    # Play success beep
+    temp1 := 3
+    buzzer := temp1
+    awaiting_input := 0
+    current_cmd := 0
+    
+    # commands[step] = nil (We wipe the command in RAM so it doesn't trigger again)
+    i := commands_ram
+    i += step
+    temp_cmd := 0
+    save v0
+    jump end_tic
+
+: draw_log
+    # Replaces your draw_log() text function with graphical prompts
+    if awaiting_input == 0 then jump end_tic
+    
+    if current_cmd != 1 then jump draw_dn_icon
+    i := icon_up
+    jump render_cmd
+    
+: draw_dn_icon
+    if current_cmd != 2 then jump draw_rt_icon
+    i := icon_down
+    jump render_cmd
+    
+: draw_rt_icon
+    if current_cmd != 3 then jump draw_act_icon
+    i := icon_right
+    jump render_cmd
+    
+: draw_act_icon
+    i := icon_action
+    
+: render_cmd
+    draw_x := 28
+    draw_y := 12
+    sprite draw_x draw_y 8
+    jump end_tic
+
+
+# ======================
+# FAIL
+# ======================
+: do_fail
+    # Draw TERMINAL DESYNC icon (Skull)
+    i := icon_fail
+    draw_x := 28
+    draw_y := 12
+    sprite draw_x draw_y 8
+    
+    # if btnp(4) then reset_game() end (Waiting for ACTION key 5)
+    temp1 := 5
+    if temp1 key then jump reset_game
+    jump end_tic
+
+
+# ======================
+# SUCCESS
+# ======================
+: do_success
+    # Draw SYNC SUCCESSFUL icon (Checkmark)
+    i := icon_success
+    draw_x := 28
+    draw_y := 12
+    sprite draw_x draw_y 8
+    jump end_tic
+
+
+# ======================
+# RESET GAME UTILITY
+# ======================
+: reset_game
+    # Instead of pairs(), we copy the template ROM block into the RAM block
+    # for k,v in pairs(commands_template) do commands[k] = v end
+    temp1 := 0 # Loop Index
+: copy_loop
+    i := commands_rom
+    i += temp1
+    load v0
+    
+    i := commands_ram
+    i += temp1
+    save v0
+    
+    temp1 += 1
+    temp2 := 64
+    if temp1 != temp2 then jump copy_loop
+
+    # Reset core logic variables
+    frame := 0
+    step := 1
+    awaiting_input := 0
+    current_cmd := 0
+    input_delay := 0
+    state := STATE_GAME
+    jump end_tic
+
+
+# ======================
+# END OF FRAME
+# ======================
+: end_tic
+    jump tic_loop
+
+
+# ======================
+# DATA ARRAYS & SPRITES
+# ======================
+
+# commands_template data (0=None, 1=UP, 2=DOWN, 3=RIGHT, 4=ACTION)
+# 64 bytes total mapped perfectly to your 1-63 indexing sequence.
+: commands_rom
+    0 0 2 0 0 1 0 0 4 0 0 0 1 0 0 4  # Steps 0-15
+    0 0 2 0 0 3 0 0 4 0 0 0 4 0 0 0  # Steps 16-31
+    4 0 0 0 4 0 0 0 3 0 0 2 0 0 2 0  # Steps 32-47
+    0 4 0 0 0 3 0 0 3 0 0 0 2 0 4 0  # Steps 48-63
+
+# Writable RAM block reserved for tracking active commands
+: commands_ram
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+# Graphical Replacements for Text Strings (8x8 sprites)
+: icon_title
+    0x7E 0xFF 0xFF 0xC3 0xC3 0xFF 0xFF 0x7E # Gamepad abstract
+: icon_term 
+    0xFF 0x81 0x81 0x81 0x81 0xFF 0x18 0x3C # DEV TERMINAL (Monitor)
+: icon_ready 
+    0x18 0x38 0x78 0xF8 0xF8 0x78 0x38 0x18 # STREAM READY (Play button)
+: icon_fail 
+    0x3C 0x42 0xA5 0x81 0x5A 0x24 0x24 0x00 # DESYNC (Skull)
+: icon_success 
+    0x00 0x01 0x02 0x04 0x88 0x50 0x20 0x00 # COMPLETE (Checkmark)
+
+# Graphical Replacements for Input Text Log
+: icon_up 
+    0x18 0x3C 0x7E 0xFF 0x18 0x18 0x18 0x18 # "UP"
+: icon_down 
+    0x18 0x18 0x18 0x18 0xFF 0x7E 0x3C 0x18 # "DOWN"
+: icon_right 
+    0x00 0x08 0x0C 0x0E 0xFF 0x0E 0x0C 0x08 # "RIGHT"
+: icon_action 
+    0x81 0x42 0x24 0x18 0x18 0x24 0x42 0x81 # "ACTION" (Crosshair / X)
