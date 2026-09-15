@@ -10,9 +10,9 @@ You need to run .ch8 file in Chip 8 Emulator/Interpreter
 
 <h3>Both of these links take you to Superhero_Tournament</h3>
 
-<a href="https://github.com/Daniel-Hanrahan-Tools-and-Games/Superhero_Tournament">Untitled_Knight_Game Repository Page</a>
+<a href="https://github.com/Daniel-Hanrahan-Tools-and-Games/Untitled_Knight_Game">Untitled_Knight_Game Repository Page</a>
 
-<a href="https://daniel-hanrahan-tools-and-games.github.io/Superhero_Tournament/">Untitled_Knight_Game ReadMe Page</a>
+<a href="https://daniel-hanrahan-tools-and-games.github.io/Untitled_Knight_Game/">Untitled_Knight_Game ReadMe Page</a>
 
 
 
